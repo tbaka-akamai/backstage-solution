@@ -1,0 +1,27 @@
+## template: jinja
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - git
+write_files:
+  - path: /root/init_vars
+    content: | 
+      app_name: {{ app_name }}
+      root_password: {{ root_password }}
+      sudo_username: {{ sudo_username }}
+      backstage_domain: {{ backstage_domain }}
+      backstage_subdomain: {{ backstage_subdomain }}
+      soa_email: {{ soa_email }}
+      github_oauth_client_id: {{ github_oauth_client_id }}
+      github_oauth_client_secret: {{ github_oauth_client_secret }}
+
+ansible:
+  install_method: pip
+  galaxy:
+    actions:
+      - ["ansible-galaxy", "collection", "install", "community.general"]
+      - ["ansible-galaxy", "collection", "install", "community.postgresql"]
+  pull:
+    url: "https://github.com/tbaka-akamai/backstage-solution.git"
+    playbook_name: backstage.yml

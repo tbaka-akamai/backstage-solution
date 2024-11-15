@@ -1,0 +1,286 @@
+---
+- name: Backstage Node setup
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  any_errors_fatal: true
+  vars_files: /root/init_vars
+  user: root
+  tasks:
+    # backstage preflight
+    - name: Generate credentials
+      ansible.builtin.set_fact:
+        sudo_password: "{{ lookup('password', '/dev/null length=25 chars=ascii_letters,digits') }}"
+        pgsql_password: "{{ lookup('password', '/dev/null length=25 chars=ascii_letters,digits') }}"
+        fqdn: "{{ backstage_subdomain }}.{{ backstage_domain }}"
+      no_log: true
+    - name: Install backstage depends
+      ansible.builtin.apt:
+        name:
+          - make
+          - build-essential
+          - libpq-dev
+          - python3-psycopg2
+          - python3-passlib
+          - curl
+          - docker
+          - python3-certbot
+        state: present
+    - name: Create sudo user
+      ansible.builtin.user:
+        name: "{{ sudo_username }}"
+        shell: /bin/bash
+        groups: sudo
+        password: "{{ sudo_password | password_hash('sha512') }}"
+        update_password: on_create
+        expires: -1
+        append: true
+        generate_ssh_key: true
+        ssh_key_bits: 4096
+        ssh_key_file: .ssh/id_rsa
+        state: present
+    # add keys when deployed with account keys
+    - name: Checking account keys
+      ansible.builtin.stat:
+        path: '/root/.ssh/authorized_keys'
+      register: authorized_keys_file
+    - name: Adding account keys to sudo user
+      ansible.builtin.copy:
+        src: '/root/.ssh/authorized_keys'
+        dest: '/home/{{ sudo_username }}/.ssh/authorized_keys'
+        mode: '0600'
+        owner: "{{ sudo_username }}"
+        group: "{{ sudo_username }}"
+      when:
+        - authorized_keys_file.stat.exists
+        - authorized_keys_file.stat.size > 0
+    - name: Write credentials
+      ansible.builtin.blockinfile:
+        path: '/home/{{ sudo_username }}/.credentials'
+        create: true
+        owner: '{{ sudo_username }}'
+        group: '{{ sudo_username }}'
+        mode: '0600'
+        content: |
+          root_password: {{ root_password }}
+          sudo_password: {{ sudo_password }}
+          postgres_password: {{ pgsql_password }}
+    - name: Add nodesource key
+      ansible.builtin.get_url:
+        url: 'https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key'
+        dest: '/tmp/nodesource.gpg'
+        owner: root
+        group: root
+        mode: "0600"
+    - name: Dearmouring nodesource key
+      ansible.builtin.shell: gpg --dearmor < /tmp/nodesource.gpg > /usr/share/keyrings/nodesource.gpg
+      register: nodesource_key_result
+      changed_when: nodesource_key_result.rc == 0
+    - name: Add nodesource repo
+      ansible.builtin.apt_repository:
+        repo: 'deb [arch=amd64 signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main'
+        state: present
+        update_cache: true
+    - name: Set nodejs preference
+      ansible.builtin.blockinfile:
+        path: '/etc/apt/preferences.d/nodejs'
+        owner: root
+        group: root
+        mode: "0644"
+        create: true
+        state: present
+        block: |
+          Package: nodejs
+          Pin: origin deb.nodesource.com
+          Pin-Priority: 600
+    - name: Install nodejs 20
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+    - name: Install yarn
+      community.general.npm:
+        name: yarn
+        global: true
+    # postgresql install
+    - name: Add postgresql key
+      ansible.builtin.get_url:
+        url: 'https://www.postgresql.org/media/keys/ACCC4CF8.asc'
+        dest: '/tmp/apt.postgresql.org.asc'
+        owner: root
+        group: root
+        mode: "0600"
+    - name: Dearmouring postgresql key
+      ansible.builtin.shell: gpg --dearmor < /tmp/apt.postgresql.org.asc > /usr/share/keyrings/postgresql.gpg
+      register: postgresql_key_result
+      changed_when: postgresql_key_result.rc == 0
+    - name: Add postgresql repo
+      ansible.builtin.apt_repository:
+        repo: 'deb [signed-by=/usr/share/keyrings/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt jammy-pgdg main'
+        state: present
+        update_cache: true
+    - name: Install postgresql
+      ansible.builtin.apt:
+        name: postgresql-16
+        state: present
+    - name: Apply password to pgsql user
+      community.postgresql.postgresql_user:
+        name: postgres
+        password: '{{ pgsql_password }}'
+        state: present
+      become: true
+      become_user: postgres
+    # nginx install
+    - name: Install nginx
+      ansible.builtin.apt:
+        name:
+          - nginx
+          - nginx-common
+        state: present
+    - name: Stop nginx to run certbot
+      ansible.builtin.systemd_service:
+        name: nginx
+        state: stopped
+    - name: Run dry-run for domain
+      ansible.builtin.command:
+        cmd: "certbot -n --standalone --agree-tos --dry-run certonly -d {{ fqdn }} -m {{ soa_email }}"
+      register: dry_run_results
+      until: dry_run_results is not failed
+      retries: 3
+      delay: 3
+      changed_when: dry_run_results.rc == 0
+    - name: Installing let's encrypt certificate on provisioner
+      ansible.builtin.command:
+        cmd: "certbot -n --standalone --agree-tos certonly -d {{ fqdn }} -m {{ soa_email }}"
+      register: certbot_cert_results
+      changed_when: certbot_cert_results.rc == 0
+    - name: Copy nginx configs
+      ansible.builtin.blockinfile:
+        path: '/etc/nginx/sites-available/{{ fqdn }}'
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+        block: |
+          server {
+            listen 80;
+            server_name {{ fqdn }};
+            root /var/www/{{ backstage_domain }}/public_html;
+            location / {
+              try_files $uri $uri/ /index.php?$args =404;
+              include proxy_params;
+              proxy_pass   http://localhost:3000;
+            return 301 https://$host$request_uri;
+            }
+            location ~ /.well-known/acme-challenge {
+                allow all;
+                root /var/www/{{ backstage_domain }}/public_html ;
+              }
+            }
+          server {
+            listen 443 ssl;
+            server_name {{ fqdn }};
+            ssl_certificate /etc/letsencrypt/live/{{ backstage_domain }}/fullchain.pem;
+            ssl_certificate_key /etc/letsencrypt/live/{{ backstage_domain }}/privkey.pem;
+            root /var/www/{{ backstage_domain }}/public_html;
+            location / {
+                include proxy_params;
+                proxy_pass http://localhost:3000;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+          }
+    - name: Create symlink
+      ansible.builtin.file:
+        src: '/etc/nginx/sites-available/{{ fqdn }}'
+        dest: '/etc/nginx/sites-enabled/{{ fqdn }}'
+        state: link
+    - name: Disable default site
+      ansible.builtin.file:
+        path: '/etc/nginx/sites-enabled/default'
+        state: absent
+    - name: Install backstage via npx
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          echo "{{ app_name }}" | npx @backstage/create-app
+        executable: /bin/bash
+      register: backstage_scaffold_result
+      changed_when: backstage_scaffold_result.rc == 0
+    # needs app configs next
+    - name: Write app-config.local.yaml
+      ansible.builtin.blockinfile:
+        path: '{{ app_name }}/app-config.local.yaml'
+        insertafter: EOF
+        block: |
+          app:
+            title: {{ app_name }}
+            baseUrl: http://localhost:3000
+          Organization:
+            name: Backstage Proof of Concept
+          backend:
+            baseUrl: http://localhost:7007
+            listen:
+              port: 7007
+            csp:
+              connect-src: ["'self'", 'http:', 'https:']
+            cors:
+              origin: http://localhost:3000
+              methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+              credentials: true
+            database:
+              connection:
+                host: localhost
+                port: 5432
+                user: postgres
+                password: {{ pgsql_password }}
+            environment: development
+            providers:
+              github:
+                development:
+                  clientId: {{ github_oauth_client_id }}
+                  clientSecret: {{ github_oauth_client_secret }}
+    - name: Insert auth code
+      ansible.builtin.blockinfile:
+        path: '{{ app_name }}/packages/app/src/App.tsx'
+        insertafter: ^import \{ catalogEntityCreatePermission \} from '\@backstage\/plugin-catalog-common\/alpha';
+        block: |
+          import { githubAuthApiRef } from '@backstage/core-plugin-api';
+          import { SignInProviderConfig, SignInPage } from '@backstage/core-components';
+
+          const githubProvider: SignInProviderConfig = {
+          id: 'github-auth-provider',
+          title: 'GitHub',
+          message: 'Sign in using GitHub',
+          apiRef: githubAuthApiRef,
+          };
+          const app = createApp({
+            apis,
+          components: {
+            SignInPage: props => (
+              <SignInPage
+                {...props}
+                auto
+                provider={githubProvider}
+                />
+              ),
+            },
+        marker: "// {mark} ANSIBLE MANAGED BLOCK"
+        marker_begin: "BEGIN"
+        marker_end: "END"
+    - name: Run backstage dev
+      ansible.builtin.shell:
+        cmd: yarn dev &
+        chdir: '{{ app_name }}/'
+      register: yarn_dev_result
+      changed_when: yarn_dev_result.rc == 0
+    - name: Start reverse proxy
+      ansible.builtin.systemd_service:
+        name: nginx
+        state: started
+        enabled: true
+    - name: Clean up files
+      ansible.builtin.file:
+        path:
+          - /root/init_vars
+          - /root/nginx_server_config
+        state: absent
