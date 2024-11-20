@@ -1,5 +1,6 @@
 variable "linode_token" {
   description = "Linode APIv4 Personal Access Token"
+  sensitive = true
 }
 variable "workstation_ipv4" {
   description = "Incoming ipv4 address for instance access; must be valid CIDR"
@@ -17,11 +18,17 @@ variable "backstage_subdomain" {
 variable "soa_email" {
   description = "Email address for Backstage domain."  
 }
+variable "github_username" {
+  description = "Github Username to auth with. Must be be linked to OAuth App" 
+  type = string 
+}
 variable "github_oauth_client_id" {
   description = "Github OAuth Client ID"
+  sensitive = true
 }
 variable "github_oauth_client_secret" {
   description = "Github OAuth Client Secret"
+  sensitive = true
 }
 variable "sudo_username" {
   description = "Name for generated sudo user"

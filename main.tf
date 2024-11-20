@@ -51,9 +51,9 @@ data "template_cloudinit_config" "backstage_cloud_config" {
   gzip          = true
   base64_encode = true
   part {
-    filename     = "init.cfg"
+    filename     = "cloud-init.yml"
     content_type = "text/cloud-config"
-    content = "${data.template_file.backstage_config_template.rendered}"
+    content = data.template_file.backstage_config_template.rendered
   }
 }
 # Create Backstage node
@@ -65,7 +65,7 @@ resource "linode_instance" "backstage_instance" {
         authorized_users = [data.linode_profile.me.username]
         root_pass = "${local.root_password}"
   metadata {
-    user_data = "${data.template_cloudinit_config.backstage_cloud_config.rendered}"
+    user_data = data.template_cloudinit_config.backstage_cloud_config.rendered
   }
   interface {
     purpose = "public"
@@ -75,7 +75,7 @@ resource "linode_domain_record" "backstage_subdomain" {
   record_type = "A"
   target = "${local.backstage_ip}"
   name = "${var.backstage_subdomain}"
-  domain_id = data.linode_domains.current_dns.domains.0.id != "" ? data.linode_domains.current_dns.domains.0.id : linode_domain.backstage_domain.id 
+  domain_id = data.linode_domains.current_dns.domains.0.id != "" ? data.linode_domains.current_dns.domains.0.id : linode_domain.backstage_domain.0.id 
 }
 resource "linode_firewall" "backstage_firewall" {
   label = "backstage_firewall"

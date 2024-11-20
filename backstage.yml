@@ -164,7 +164,7 @@
           server {
             listen 80;
             server_name {{ fqdn }};
-            root /var/www/{{ backstage_domain }}/public_html;
+            root /var/www/{{ fqdn }}/public_html;
             location / {
               try_files $uri $uri/ /index.php?$args =404;
               include proxy_params;
@@ -173,15 +173,15 @@
             }
             location ~ /.well-known/acme-challenge {
                 allow all;
-                root /var/www/{{ backstage_domain }}/public_html ;
+                root /var/www/{{ fqdn }}/public_html ;
               }
             }
           server {
             listen 443 ssl;
             server_name {{ fqdn }};
-            ssl_certificate /etc/letsencrypt/live/{{ backstage_domain }}/fullchain.pem;
-            ssl_certificate_key /etc/letsencrypt/live/{{ backstage_domain }}/privkey.pem;
-            root /var/www/{{ backstage_domain }}/public_html;
+            ssl_certificate /etc/letsencrypt/live/{{ fqdn }}/fullchain.pem;
+            ssl_certificate_key /etc/letsencrypt/live/{{ fqdn }}/privkey.pem;
+            root /var/www/{{ fqdn }}/public_html;
             location / {
                 include proxy_params;
                 proxy_pass http://localhost:3000;
@@ -228,45 +228,82 @@
               methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
               credentials: true
             database:
+              client: pg
               connection:
                 host: localhost
                 port: 5432
                 user: postgres
                 password: {{ pgsql_password }}
-            environment: development
+          auth:
+            enviroment: development
             providers:
+              guest: {}
               github:
                 development:
                   clientId: {{ github_oauth_client_id }}
                   clientSecret: {{ github_oauth_client_secret }}
+                  signIn:
+                    resolvers:
+                    # Matches the GitHub username with the Backstage user entity name.
+                    # See https://backstage.io/docs/auth/github/provider#resolvers for more resolvers.
+                      - resolver: usernameMatchingUserEntityName
+    - name: Delete duplicate app code
+      ansible.builtin.blockinfile:
+        path: '{{ app_name }}/packages/app/src/App.tsx'
+        block: |
+          const app = createApp({
+            apis,
+        state: absent
     - name: Insert auth code
       ansible.builtin.blockinfile:
         path: '{{ app_name }}/packages/app/src/App.tsx'
-        insertafter: ^import \{ catalogEntityCreatePermission \} from '\@backstage\/plugin-catalog-common\/alpha';
+        insertafter: ^import \{ catalogEntityCreatePermission \} from '\@backstage\/plugin-catalog-common\/alpha\'\;
         block: |
           import { githubAuthApiRef } from '@backstage/core-plugin-api';
-          import { SignInProviderConfig, SignInPage } from '@backstage/core-components';
-
-          const githubProvider: SignInProviderConfig = {
-          id: 'github-auth-provider',
-          title: 'GitHub',
-          message: 'Sign in using GitHub',
-          apiRef: githubAuthApiRef,
-          };
           const app = createApp({
             apis,
-          components: {
-            SignInPage: props => (
-              <SignInPage
-                {...props}
-                auto
-                provider={githubProvider}
+            components: {
+              SignInPage: props => (
+                <SignInPage
+                  {...props}
+                  auto
+                  {% raw %}
+                  provider={{
+                    id: 'github-auth-provider',
+                    title: 'GitHub',
+                    message: 'Sign in using GitHub',
+                    apiRef: githubAuthApiRef,
+                  }}
+                  {% endraw %}
                 />
               ),
             },
         marker: "// {mark} ANSIBLE MANAGED BLOCK"
         marker_begin: "BEGIN"
         marker_end: "END"
+    - name: Insert backend code
+      ansible.builtin.lineinfile:
+        path: '{{ app_name }}/packages/backend/src/index.ts'
+        insertafter: ^backend\.add\(import\('@backstage\/plugin-auth-backend\'\)\)\;
+        line: backend.add(import('@backstage/plugin-auth-backend-module-github-provider'));
+        state: present
+    - name: Insert git user into org.yml
+      ansible.builtin.blockinfile:
+        path: '{{ app_name }}/example/org.yml'
+        block: |
+          ---
+          apiVersion: backstage.io/v1alpha1
+          kind: User
+          metadata:
+            name: {{ github_username }}
+          spec:
+            memberOf: [guests]
+    - name: Install Github Auth Package
+      ansible.builtin.command:
+        cmd: yarn --cwd packages/backend add @backstage/plugin-auth-backend-module-github-provider
+        chdir: '{{ app_name }}/'
+      register: yarn_auth_result
+      changed_when: yarn_auth_result.rc == 0
     - name: Run backstage dev
       ansible.builtin.shell:
         cmd: yarn dev &
@@ -282,5 +319,4 @@
       ansible.builtin.file:
         path:
           - /root/init_vars
-          - /root/nginx_server_config
         state: absent
