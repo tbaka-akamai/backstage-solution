@@ -167,7 +167,6 @@
             root /var/www/{{ fqdn }}/public_html;
             location / {
               try_files $uri $uri/ /index.php?$args =404;
-              include proxy_params;
               proxy_pass   http://localhost:3000;
             return 301 https://$host$request_uri;
             }
@@ -183,10 +182,7 @@
             ssl_certificate_key /etc/letsencrypt/live/{{ fqdn }}/privkey.pem;
             root /var/www/{{ fqdn }}/public_html;
             location / {
-                include proxy_params;
                 proxy_pass http://localhost:3000;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header X-Forwarded-Proto $scheme;
             }
           }
     - name: Create symlink
@@ -224,7 +220,7 @@
             csp:
               connect-src: ["'self'", 'http:', 'https:']
             cors:
-              origin: http://localhost:3000
+              origin: https://{{ fqdn }}
               methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
               credentials: true
             database:
@@ -248,11 +244,14 @@
                     # See https://backstage.io/docs/auth/github/provider#resolvers for more resolvers.
                       - resolver: usernameMatchingUserEntityName
     - name: Delete duplicate app code
-      ansible.builtin.blockinfile:
+      ansible.builtin.lineinfile:
         path: '{{ app_name }}/packages/app/src/App.tsx'
-        block: |
-          const app = createApp({
-            apis,
+        search_string: 'const app = createApp({'
+        state: absent
+    - name: Delete duplicate apis code
+      ansible.builtin.lineinfile:
+        path: '{{ app_name }}/packages/app/src/App.tsx'
+        search_string: 'apis,'
         state: absent
     - name: Insert auth code
       ansible.builtin.blockinfile:
@@ -289,7 +288,7 @@
         state: present
     - name: Insert git user into org.yml
       ansible.builtin.blockinfile:
-        path: '{{ app_name }}/example/org.yml'
+        path: '{{ app_name }}/examples/org.yml'
         block: |
           ---
           apiVersion: backstage.io/v1alpha1
@@ -304,12 +303,18 @@
         chdir: '{{ app_name }}/'
       register: yarn_auth_result
       changed_when: yarn_auth_result.rc == 0
-    - name: Run backstage dev
+    - name: Run backstage backend
       ansible.builtin.shell:
-        cmd: yarn dev &
+        cmd: yarn start-backend &
         chdir: '{{ app_name }}/'
-      register: yarn_dev_result
-      changed_when: yarn_dev_result.rc == 0
+      register: yarn_backend_result
+      changed_when: yarn_backend_result.rc == 0
+    - name: Run backstage frontend
+      ansible.builtin.shell:
+        cmd: yarn start &
+        chdir: '{{ app_name }}/'
+      register: yarn_frontend_result
+      changed_when: yarn_frontend_result.rc == 0
     - name: Start reverse proxy
       ansible.builtin.systemd_service:
         name: nginx

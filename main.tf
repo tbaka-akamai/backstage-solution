@@ -45,6 +45,7 @@ data "template_file" "backstage_config_template" {
     soa_email = "${var.soa_email}"
     github_oauth_client_id = "${var.github_oauth_client_id}"
     github_oauth_client_secret = "${var.github_oauth_client_secret}"
+    github_username = "${var.github_username}"
   }
 }
 data "template_cloudinit_config" "backstage_cloud_config" {
