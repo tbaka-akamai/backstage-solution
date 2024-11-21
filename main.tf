@@ -49,7 +49,7 @@ data "template_file" "backstage_config_template" {
   }
 }
 data "template_cloudinit_config" "backstage_cloud_config" {
-  gzip          = true
+  gzip          = false
   base64_encode = true
   part {
     filename     = "cloud-init.yml"
@@ -60,7 +60,7 @@ data "template_cloudinit_config" "backstage_cloud_config" {
 # Create Backstage node
 resource "linode_instance" "backstage_instance" {
   image = "linode/ubuntu22.04"
-        label = "backstage_instance"
+        label = "${var.app_name}_instance"
         region = var.region
         type = var.backstage_instance_type
         authorized_users = [data.linode_profile.me.username]
@@ -79,7 +79,7 @@ resource "linode_domain_record" "backstage_subdomain" {
   domain_id = data.linode_domains.current_dns.domains.0.id != "" ? data.linode_domains.current_dns.domains.0.id : linode_domain.backstage_domain.0.id 
 }
 resource "linode_firewall" "backstage_firewall" {
-  label = "backstage_firewall"
+  label = "${var.app_name}_firewall"
   inbound_policy = "DROP"
   outbound_policy = "DROP"
 
