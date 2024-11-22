@@ -25,6 +25,7 @@ resource "random_password" "root_password" {
   special          = true
   override_special = "!#$%&*()-_=+[]{}<>:?"
 }
+
 # random_password.root_password.result
 # set instance variables
 resource "linode_domain" "backstage_domain" {
@@ -37,17 +38,17 @@ resource "linode_domain" "backstage_domain" {
 data "template_file" "backstage_config_template" {
   template = "${file("${path.module}/backstage-cloud-config.tftpl")}"
   vars = {
-    app_name = "${var.app_name}"
-    root_password = "${local.root_password}"
-    sudo_username = "${var.sudo_username}"
-    backstage_domain = "${var.backstage_domain}"
-    backstage_subdomain = "${var.backstage_subdomain}"
-    soa_email = "${var.soa_email}"
-    github_oauth_client_id = "${var.github_oauth_client_id}"
-    github_oauth_client_secret = "${var.github_oauth_client_secret}"
-    github_username = "${var.github_username}"
-  }
-}
+      app_name = var.app_name
+      root_password = local.root_password
+      sudo_username = var.sudo_username
+      backstage_domain = var.backstage_domain
+      backstage_subdomain = var.backstage_subdomain
+      soa_email = var.soa_email
+      github_oauth_client_id = var.github_oauth_client_id
+      github_oauth_client_secret = var.github_oauth_client_secret
+      github_username = var.github_username
+      }
+    }
 data "template_cloudinit_config" "backstage_cloud_config" {
   gzip          = false
   base64_encode = true
@@ -59,7 +60,7 @@ data "template_cloudinit_config" "backstage_cloud_config" {
 }
 # Create Backstage node
 resource "linode_instance" "backstage_instance" {
-  image = "linode/ubuntu22.04"
+  image = "linode/ubuntu24.04"
         label = "${var.app_name}_instance"
         region = var.region
         type = var.backstage_instance_type
@@ -81,7 +82,7 @@ resource "linode_domain_record" "backstage_subdomain" {
 resource "linode_firewall" "backstage_firewall" {
   label = "${var.app_name}_firewall"
   inbound_policy = "DROP"
-  outbound_policy = "DROP"
+  outbound_policy = "ACCEPT"
 
   inbound {
     label = "backstage_web_gui"

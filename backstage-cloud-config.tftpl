@@ -2,21 +2,22 @@
 package_update: true
 packages:
   - git
+  - python3-pip
 write_files:
   - path: /root/init_vars
     content: | 
-      app_name: ${var.app_name}
-      root_password: ${local.root_password}
-      sudo_username: ${var.sudo_username}
-      backstage_domain: ${var.backstage_domain}
-      backstage_subdomain: ${var.backstage_subdomain}
-      soa_email: ${var.soa_email}
-      github_oauth_client_id: ${var.github_oauth_client_id}
-      github_oauth_client_secret: ${var.github_oauth_client_secret}
-      github_username ${var.github_username}
-
+      app_name = ${app_name}
+      root_password = ${root_password }
+      sudo_username = ${sudo_username}
+      backstage_domain = ${backstage_domain}
+      backstage_subdomain = ${backstage_subdomain}
+      soa_email = ${soa_email}
+      github_oauth_client_id = ${github_oauth_client_id}
+      github_oauth_client_secret = ${github_oauth_client_secret}
+      github_username = ${github_username}
 ansible:
   install_method: pip
+  package_name: ansible-core
   galaxy:
     actions:
     - ["ansible-galaxy", "collection", "install", "community.postgresql"]
